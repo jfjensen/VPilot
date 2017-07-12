@@ -10,7 +10,7 @@ import cv2
 import sys
 import numpy as np
 
-from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
+from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot, QRect
 from PyQt5.QtWidgets import QApplication, QPushButton, QTextEdit, QVBoxLayout, QWidget, QLabel
 from PyQt5.QtGui import QImage, QPixmap
 
@@ -50,17 +50,7 @@ class Worker(QObject):
         thread_id = int(QThread.currentThreadId())  # cast to int() is necessary
         self.sig_msg.emit('Running worker #{} from thread "{}" (#{})'.format(self.__id, thread_name, thread_id))
 
-        # for step in range(25):
-            # time.sleep(0.1)
-            # self.sig_step.emit(self.__id, 'step ' + str(step))
-
-            # # check if we need to abort the loop; need to process events to receive signals;
-            # app.processEvents()  # this could cause change to self.__abort
-            # if self.__abort:
-                # # note that "step" value will not necessarily be same for every thread
-                # self.sig_msg.emit('Worker #{} aborting work at step {}'.format(self.__id, step))
-                # break
-                
+                     
         # Creates a new connection to DeepGTAV using the specified ip and port. 
         # If desired, a dataset path and compression level can be set to store in memory all the data received in a gziped pickle file.
         # We don't want to save a dataset in this case
@@ -79,7 +69,7 @@ class Worker(QObject):
 
         # Start listening for messages coming from DeepGTAV. We do it for 80 hours
         stoptime = time.time() + 80*3600
-        while time.time() < stoptime:
+        while (time.time() < stoptime and (not self.__abort)):
             # We receive a message as a Python dictionary
             app.processEvents()
             message = self.client.recvMessage() 
@@ -93,13 +83,7 @@ class Worker(QObject):
             # We send the commands predicted by the agent back to DeepGTAV to control the vehicle
             self.client.sendMessage(Commands(commands[0], commands[1], commands[2]))
         
-            # app.processEvents()
             
-            if self.__abort:
-                # note that "step" value will not necessarily be same for every thread
-                self.sig_msg.emit('Worker #{} aborting work at step {}'.format(self.__id, step))
-                break
-
         # We tell DeepGTAV to stop
         self.client.sendMessage(Stop())
         self.client.close()
@@ -127,8 +111,7 @@ class MyWidget(QWidget):
         self.setLayout(form_layout)
         self.resize(400, 800)
 
-        
-        
+                
         self.button_start = QPushButton()
         self.button_start.clicked.connect(self.start_thread)
         self.button_start.setText("Start")
@@ -144,6 +127,8 @@ class MyWidget(QWidget):
         # form_layout.addWidget(self.log)
 
         self.label = QLabel(self)
+        # self.label.setGeometry(QRect(20, 20, 320, 160))
+        self.label.resize(320, 160)
         
         # self.progress = QTextEdit()
         # form_layout.addWidget(self.progress)
@@ -199,12 +184,11 @@ class MyWidget(QWidget):
        
     @pyqtSlot(list)
     def on_image(self, image):
-        # print(image)
-        image_np = np.array(image)
+        image_np = np.array(image).astype(np.uint8)
         height, width, channel = image_np.shape
-        bytesPerLine = 3 * width
-        qImg = QImage(image_np, width, height, bytesPerLine, QImage.Format_RGB888)
-        pix = QPixmap(qImg)
+        image_np = cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB)
+        qImg = QImage(image_np.data, width, height, QImage.Format_RGB888)
+        pix = QPixmap.fromImage(qImg)
         self.label.setPixmap(pix)
 
     @pyqtSlot()
@@ -212,6 +196,8 @@ class MyWidget(QWidget):
         self.sig_abort_worker.emit()
         # self.log.append('Asking each worker to abort')
         thread = self.__thread[0][0]  
+        worker = self.__thread[0][1] 
+
         thread.quit()  # this will quit **as soon as thread event loop unblocks**
         thread.wait()  # <- so you need to wait for it to *actually* quit
 
